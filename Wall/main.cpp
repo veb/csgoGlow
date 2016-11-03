@@ -30,6 +30,7 @@ task_t  mainTask    = 0;
 uint64_t glowInfoOffset;
 uint64_t LocalPlayerBase;
 uint64_t playerBase;
+uint64_t CClientStateBase;
 
 uint64_t m_iGlowIndex       = 0xAC10;
 bool statBool = true;
@@ -281,6 +282,113 @@ int testLocalPlayerAddress(uint64_t clientBase) {
     return iTeamNum;
 }
 
+void aim(mach_vm_address_t imgbase, int iTeamNum, mach_vm_address_t engineStartAddress){
+    uint64_t playerAddress  = mem->read<uint64_t>(imgbase + LocalPlayerBase);
+    
+    //read my position
+    float ePos[3];
+    float myPos[3];
+
+    for(int i = 0; i < 3; i++){
+        myPos[i] = mem->read<float>(playerAddress + 0x16C + 0x4 * i);
+    }
+
+    //offset my z position to my eye view
+    myPos[2] += mem->read<float>(playerAddress + 0x144);
+
+    //read vecorigin
+    float myAngle[2];
+    for(int i = 0; i < 2; i++){
+        myAngle[i] = mem->read<float>(playerAddress + 0x160 + 0x4 * i);
+    }
+    
+    //angle[0] = pitch
+    //angle[1] = yaw
+    
+    for (int t = 0; t < 60; t++) {
+        uint64_t memoryAddress = mem->read<uint64_t>(imgbase + playerBase + 0x20 * t);
+        if (memoryAddress <= 0x0){
+            continue;
+        }
+        
+        int health          = mem->read<int>(memoryAddress + 0x134);
+        int playerTeamNum   = mem->read<int>(memoryAddress + 0x128);
+        
+        //check dormant?? not sure if this is right
+        /*
+         bool playerDormant       = mem->read<bool>(memoryAddress + 0xEE);
+         if (playerDormant) {
+         continue;
+         }
+         */
+
+        if (playerTeamNum == 0) {
+            continue;
+        }
+        
+        if (health < 1) {
+            continue;
+        }
+
+        if((iTeamNum == 2 && playerTeamNum == 3) || (iTeamNum == 3 && playerTeamNum == 2)){
+            //enemy location
+            ePos[0] = mem->read<float>(memoryAddress + 0x16C);
+            ePos[1] = mem->read<float>(memoryAddress + 0x170);
+            ePos[2] = (mem->read<float>(memoryAddress + 0x174) + mem->read<float>(memoryAddress + 0x144));
+
+            float angles[3];
+            double delta[3] = { (myPos[0]-ePos[0]), (myPos[1]-ePos[1]), (myPos[2]-ePos[2]) };
+            double hyp = sqrt(delta[0]*delta[0] + delta[1]*delta[1]);
+            angles[0] = (float) (asinf(delta[2]/hyp) * 57.295779513082f); //atanf??
+            angles[1] = (float) (atanf(delta[1]/delta[0]) * 57.295779513082f);
+            angles[2] = 0.0f;
+            if(delta[0] >= 0.0){
+                angles[1] += 180.0f;
+            }
+            if(angles[1] > 180){
+                angles[1] -= 360;
+            }
+
+            // printf("pitch: %f %f.  yaw: %f %f\n", myAngle[0], angles[0], myAngle[1], angles[1]);
+
+            //check if the enemy is witin 20 degrees of xhair
+            //if multiple enemies, aim at closest spotted enemy
+            if(
+               fabs(myAngle[0] - angles[0]) < 20 &&
+               fabs(myAngle[1] - angles[1]) < 20
+               ){
+                //pitch slow aim
+                angles[0] = myAngle[0]-(myAngle[0]-angles[0])/3;
+                //yaw slow aim
+                if(angles[1] < 0 && myAngle[1] > 0){
+                    if(fabs(angles[1]) > 90){
+                        angles[1] += 360;
+                        angles[1] = myAngle[1]-(myAngle[1]-angles[1])/3;
+                        angles[1] -= 360;
+                    }else{
+                        angles[1] = myAngle[1]-(myAngle[1]-angles[1])/3;
+                    }
+                }else if(angles[1] > 0 && myAngle[1] < 0){
+                    if(fabs(myAngle[1]) > 90){
+                        myAngle[1] += 360;
+                        angles[1] = myAngle[1]-(myAngle[1]-angles[1])/3;
+                        angles[1] -= 360;
+                    }else{
+                        angles[1] = myAngle[1]-(myAngle[1]-angles[1])/3;
+                    }
+                }else {
+                    angles[1] = myAngle[1]-(myAngle[1]-angles[1])/3;
+                }
+
+                //write to viewangles in engine
+                uint64_t stateAddress = mem->read<uint64_t>(engineStartAddress + CClientStateBase);
+                mem->write<float>(stateAddress + 0x8E20, angles[0]);
+                mem->write<float>(stateAddress + 0x8E24, angles[1]);
+            }
+        }
+    }
+}
+
 int main(int argc, const char * argv[]) {
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_BACKGROUND, 0), ^{
         keyBoardListen();
@@ -295,6 +403,20 @@ int main(int argc, const char * argv[]) {
     } else {
         printf("Found CSGO PID: %i\n", mainPid);
     }
+    
+    off_t engineLength = 0;
+    mach_vm_address_t engineStartAddress;
+    g_cProc->getModule(mainTask, &engineStartAddress, &engineLength, "/engine.dylib");
+    
+    Scanner * engineScanner = new Scanner(engineStartAddress, engineLength);
+    
+    CClientStateBase = engineScanner->getPointer(
+                                                 (Byte*)"\x55\x48\x89\xE5\x48\x8B\x00\x00\x00\x00\x00\x48\x83\x00\x00\x5D\xC3\x66\x66\x66\x66\x66\x66\x2E\x0F\x1F\x84\x00\x00\x00\x00\x00",
+                                                 "xxxxxx?????xx??xxxxxxxxxxxxxxxxx",
+                                                 0x7
+                                                 ) + 0x4;
+    
+    printf("engine: 0x%llx, cclientbase: 0x%llx \n", engineStartAddress, CClientStateBase);
     
     off_t moduleLength = 0;
     mach_vm_address_t moduleStartAddress;
@@ -336,6 +458,7 @@ int main(int argc, const char * argv[]) {
         {
             int i_teamNum = testLocalPlayerAddress(moduleStartAddress);
             readPlayerPointAndHealth(moduleStartAddress, glowObjectLoopStartAddress, i_teamNum);
+            aim(moduleStartAddress, i_teamNum, engineStartAddress);
         }
         usleep(7800);
     }
