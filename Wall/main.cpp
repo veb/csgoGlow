@@ -274,8 +274,8 @@ int testLocalPlayerAddress(uint64_t clientBase) {
     int flashed             = mem->read<int>(playerAddress + 0xABF8);
     int iTeamNum            = mem->read<int>(playerAddress + 0x128);
 
-    if(flashed) {
-        mem->write<float>(playerAddress + 0xABF8, 0);
+    if(flashed > 0) {
+        mem->write<int>(playerAddress + 0xABF8, 0);
     }
     
     return iTeamNum;
