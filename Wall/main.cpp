@@ -32,6 +32,8 @@ uint64_t LocalPlayerBase;
 uint64_t playerBase;
 uint64_t CClientStateBase;
 
+mach_vm_address_t engineStartAddress;
+
 uint64_t m_iGlowIndex       = 0xAC10;
 bool statBool = true;
 
@@ -282,7 +284,7 @@ int testLocalPlayerAddress(uint64_t clientBase) {
     return iTeamNum;
 }
 
-void aim(mach_vm_address_t imgbase, int iTeamNum, mach_vm_address_t engineStartAddress){
+void aim(mach_vm_address_t imgbase, int iTeamNum){
     uint64_t playerAddress  = mem->read<uint64_t>(imgbase + LocalPlayerBase);
     
     //read my position
@@ -405,7 +407,7 @@ int main(int argc, const char * argv[]) {
     }
     
     off_t engineLength = 0;
-    mach_vm_address_t engineStartAddress;
+    //mach_vm_address_t engineStartAddress;
     g_cProc->getModule(mainTask, &engineStartAddress, &engineLength, "/engine.dylib");
     
     Scanner * engineScanner = new Scanner(engineStartAddress, engineLength);
@@ -416,7 +418,7 @@ int main(int argc, const char * argv[]) {
                                                  0x7
                                                  ) + 0x4;
     
-    printf("engine: 0x%llx, cclientbase: 0x%llx \n", engineStartAddress, CClientStateBase);
+    //printf("engine: 0x%llx, cclientbase: 0x%llx \n", engineStartAddress, CClientStateBase);
     
     off_t moduleLength = 0;
     mach_vm_address_t moduleStartAddress;
@@ -458,7 +460,7 @@ int main(int argc, const char * argv[]) {
         {
             int i_teamNum = testLocalPlayerAddress(moduleStartAddress);
             readPlayerPointAndHealth(moduleStartAddress, glowObjectLoopStartAddress, i_teamNum);
-            aim(moduleStartAddress, i_teamNum, engineStartAddress);
+            aim(moduleStartAddress, i_teamNum);
         }
         usleep(7800);
     }
